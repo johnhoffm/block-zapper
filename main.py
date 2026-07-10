@@ -63,7 +63,7 @@ class BZState:
 def main():
   parser = argparse.ArgumentParser(
     prog="Block Zapper",
-    description="a script for recursively modifying blocks in Minecraft structure NBT"
+    description="Block Zapper is a script for recursively modifying blocks in Minecraft structure NBT."
   )
   parser.add_argument('target_dir', type=Path, help='target directory with nbt files and .bz.toml')
   parser.add_argument('output_dir', type=Path, help='output directory for modified nbt files')
@@ -89,7 +89,7 @@ def start(bz_args: BZArgs):
   # Check if output directory exists and is non-empty
   if bz_args.output_dir.exists():
     if any(bz_args.output_dir.iterdir()):
-      raise RuntimeError(f"Output directory {bz_args.output_dir} exists and is not empty")
+      raise RuntimeError(f"Output directory '{bz_args.output_dir}' exists and is not empty")
 
   root_tree, root_tree_node_id = create_tree_summary(bz_args.target_dir) if bz_args.tree_output else (None, None)
   
@@ -172,7 +172,6 @@ def process_dir_rec(path: Path, old_state: BZState):
   state = old_state if local_config is None else merge_state(old_state, local_config)
   child_base_state = state_for_children(old_state, state, local_config)
 
-  print(f"Processing: {path}")
   for file in sorted(path.iterdir()):
     if file.is_file():
       process_file(file, state)
@@ -285,7 +284,7 @@ def process_nbt_file(path: Path, state: BZState):
   if replacements:
     # Regular logging
     for old_block, new_block in replacements:
-      print(f"  {path.name}: {old_block} -> {new_block}")
+      print(f"{path}: {old_block} -> {new_block}")
     
     # Tree output
     if state.tree and state.tree_node_id:
