@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from treelib import Tree
 
-BZ_CONFIG_FILENAME = ".bz.toml"
+BZ_CONFIG_SUFFIX = ".bz.toml"
 TREE_SUMMARY_LINE_TYPE = "ascii-ex"
 
 @dataclass
@@ -73,7 +73,7 @@ def main():
     prog="Block Zapper",
     description="Block Zapper is a script for recursively modifying blocks in Minecraft structure NBT."
   )
-  parser.add_argument('target_dir', type=Path, help='target directory with nbt files and .bz.toml')
+  parser.add_argument('target_dir', type=Path, help='target directory with nbt files and *.bz.toml files')
   parser.add_argument('output_dir', type=Path, help='output directory for modified nbt files')
   parser.add_argument('-v', '--verbose', action='store_true', help='enable verbose output')
   parser.add_argument('-n', '--dry-run', action='store_true', help='dry run, do not write or modify files')
@@ -120,11 +120,20 @@ def start(bz_args: BZArgs):
       f.write(render_tree_summary(root_tree))
 
 def load_config(path: Path) -> BZConfig | None:
-  # Find .bz.toml file in only current directory, return path or None
-  config = path / BZ_CONFIG_FILENAME
+  # Find *.bz.toml files in the current directory
+  config_paths = sorted(
+    file for file in path.iterdir()
+    if file.is_file() and file.name.endswith(BZ_CONFIG_SUFFIX)
+  )
 
-  if not config.is_file():
+  if not config_paths:
     return None
+
+  if len(config_paths) > 1:
+    names = ", ".join(config.name for config in config_paths)
+    raise RuntimeError(f"Multiple bz configuration files found in {path}: {names}")
+
+  config = config_paths[0]
   try: 
     with open(config, "rb") as f:
       data = tomllib.load(f)
