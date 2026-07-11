@@ -10,6 +10,7 @@ from enum import StrEnum
 from treelib import Tree
 
 BZ_CONFIG_FILENAME = ".bz.toml"
+TREE_SUMMARY_LINE_TYPE = "ascii-ex"
 
 @dataclass
 class BZArgs:
@@ -418,7 +419,7 @@ def add_tree_file_replacements(
   return file_node_id
 
 def render_tree_summary(tree: Tree) -> str:
-  return tree.show(stdout=False, line_type="ascii", sorting=False)
+  return tree.show(stdout=False, line_type=TREE_SUMMARY_LINE_TYPE, sorting=False)
 
 def tree_directory_id(path: Path) -> str:
   return f"dir:{path}"
