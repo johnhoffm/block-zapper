@@ -6,6 +6,7 @@ import argparse
 import re
 from pathlib import Path
 from dataclasses import dataclass, field
+from enum import StrEnum
 from treelib import Tree
 
 BZ_CONFIG_FILENAME = ".bz.toml"
@@ -25,13 +26,13 @@ class BZConfig:
   inherit: bool = True
   replace_block: dict[str, str] = field(default_factory=dict)
   replace_block_pattern: dict[str, str] = field(default_factory=dict)
-  replace_item: dict[str, str] = field(default_factory=dict)
+  replace_string: dict[str, str] = field(default_factory=dict)
 
 @dataclass
 class BZRules:
   replace_block: dict[str, str] = field(default_factory=dict)
   replace_block_pattern: dict[str, str] = field(default_factory=dict)
-  replace_item: dict[str, str] = field(default_factory=dict)
+  replace_string: dict[str, str] = field(default_factory=dict)
 
 @dataclass(frozen=True)
 class BZRun:
@@ -40,10 +41,16 @@ class BZRun:
   dry_run: bool = False
   allow_overlaps: bool = False
 
+class BZReplacementKind(StrEnum):
+  BLOCK = "block"
+  STRING = "string"
+
 @dataclass(frozen=True)
 class BZReplacement:
-  old_block: str
-  new_block: str
+  kind: BZReplacementKind
+  old_value: str
+  new_value: str
+  location: str | None = None
 
 @dataclass(frozen=True)
 class BZTreeDirectory:
@@ -128,7 +135,7 @@ def load_config(path: Path) -> BZConfig | None:
           inherit=data.get("inherit", True),
           replace_block=data.get("replace-block", {}),
           replace_block_pattern=data.get("replace-block-pattern", {}),
-          replace_item=data.get("replace-item", {}),
+          replace_string=data.get("replace-string", {}),
       )
 
 def merge_state(base: BZState, config: BZConfig, subtree: str | None = None) -> BZState:
@@ -138,7 +145,7 @@ def merge_state(base: BZState, config: BZConfig, subtree: str | None = None) -> 
     rules=BZRules(
       replace_block=base_rules.replace_block | config.replace_block,
       replace_block_pattern=base_rules.replace_block_pattern | config.replace_block_pattern,
-      replace_item=base_rules.replace_item | config.replace_item,
+      replace_string=base_rules.replace_string | config.replace_string,
     ),
     run=base.run,
     tree=base.tree,
@@ -229,7 +236,7 @@ def replace_block_str(block: str, state: BZState) -> str | None:
   pattern_result, matching_patterns = match_block_pattern(block, rules.replace_block_pattern) if rules.replace_block_pattern else (None, [])
   
   if has_exact and matching_patterns:
-    msg = f"{block} matches exact rule AND pattern(s): {matching_patterns}"
+    msg = f"'{block}' rules are ambigious: matches exact rule and pattern(s): {matching_patterns}"
     if state.run.allow_overlaps:
       print(f"WARN: {msg} (using exact)")
     else:
@@ -249,16 +256,82 @@ def replace_block_str(block: str, state: BZState) -> str | None:
     return pattern_result
   return None
 
-def transform_nbt(root, state: BZState) -> list[tuple[str, str]]:
+def replace_nbt_strings(
+  node,
+  replacements: dict[str, str],
+  location: str,
+) -> list[BZReplacement]:
   """
-  Apply block replacements to an NBT structure.
-  Returns list of (old_block, new_block) replacements made.
+  Recursively replace exact NBT string values.
+  Returns string replacements made.
+  """
+  replacements_made = []
+
+  if isinstance(node, dict):
+    for key, value in node.items():
+      child_location = f"{location}.{key}"
+      if isinstance(value, nbtlib.tag.String):
+        old_value = str(value)
+        if old_value in replacements:
+          new_value = replacements[old_value]
+          node[key] = nbtlib.tag.String(new_value)
+          replacements_made.append(BZReplacement(
+            kind=BZReplacementKind.STRING,
+            old_value=old_value,
+            new_value=new_value,
+            location=child_location,
+          ))
+      else:
+        replacements_made.extend(replace_nbt_strings(value, replacements, child_location))
+  elif isinstance(node, list):
+    for index, value in enumerate(node):
+      child_location = f"{location}[{index}]"
+      if isinstance(value, nbtlib.tag.String):
+        old_value = str(value)
+        if old_value in replacements:
+          new_value = replacements[old_value]
+          node[index] = nbtlib.tag.String(new_value)
+          replacements_made.append(BZReplacement(
+            kind=BZReplacementKind.STRING,
+            old_value=old_value,
+            new_value=new_value,
+            location=child_location,
+          ))
+      else:
+        replacements_made.extend(replace_nbt_strings(value, replacements, child_location))
+
+  return replacements_made
+
+def replace_payload_strings(root, replacements: dict[str, str]) -> list[BZReplacement]:
+  """
+  Replace strings inside block/entity NBT payloads without touching palette block states.
+  """
+  replacements_made = []
+
+  for index, block in enumerate(root.get("blocks", [])):
+    if "nbt" in block:
+      replacements_made.extend(
+        replace_nbt_strings(block["nbt"], replacements, f"blocks[{index}].nbt")
+      )
+
+  for index, entity in enumerate(root.get("entities", [])):
+    if "nbt" in entity:
+      replacements_made.extend(
+        replace_nbt_strings(entity["nbt"], replacements, f"entities[{index}].nbt")
+      )
+
+  return replacements_made
+
+def transform_nbt(root, state: BZState) -> list[BZReplacement]:
+  """
+  Apply replacements to an NBT structure.
+  Returns replacements made.
   """
   replacements = []
 
   if "palette" not in root:
     raise ValueError("No palette found in nbt data")
-  for entry in root["palette"]:
+  for index, entry in enumerate(root["palette"]):
     if "Name" not in entry:
       continue
     block = str(entry["Name"])
@@ -266,7 +339,15 @@ def transform_nbt(root, state: BZState) -> list[tuple[str, str]]:
     
     if new_block:
       entry["Name"] = nbtlib.tag.String(new_block)
-      replacements.append((block, new_block))
+      replacements.append(BZReplacement(
+        kind=BZReplacementKind.BLOCK,
+        old_value=block,
+        new_value=new_block,
+        location=f"palette[{index}].Name",
+      ))
+
+  if state.rules.replace_string:
+    replacements.extend(replace_payload_strings(root, state.rules.replace_string))
   
   return replacements
 
@@ -282,9 +363,7 @@ def process_nbt_file(path: Path, state: BZState):
     raise ValueError(f"{e} in {path}") from e
   
   if replacements:
-    # Regular logging
-    for old_block, new_block in replacements:
-      print(f"{path}: {old_block} -> {new_block}")
+    print_replacements(path, replacements)
     
     # Tree output
     if state.tree and state.tree_node_id:
@@ -297,6 +376,16 @@ def process_nbt_file(path: Path, state: BZState):
 
 def relative_output_path(path: Path, state: BZState) -> Path:
   return state.run.output_root_dir / path.relative_to(state.run.input_root_dir)
+
+def print_replacements(path: Path, replacements: list[BZReplacement]):
+  print(path)
+
+  for replacement in replacements:
+    print(f"    {replacement_label(replacement)}")
+
+def replacement_label(replacement: BZReplacement) -> str:
+  label = f"{replacement.old_value} -> {replacement.new_value}"
+  return f"[{replacement.kind}] {label}"
 
 def create_tree_summary(root_path: Path) -> tuple[Tree, str]:
   tree = Tree()
@@ -313,15 +402,14 @@ def add_tree_file_replacements(
   tree: Tree,
   parent_node_id: str,
   path: Path,
-  replacements: list[tuple[str, str]],
+  replacements: list[BZReplacement],
 ) -> str:
   file_node_id = tree_file_id(path)
   tree.create_node(path.name, file_node_id, parent=parent_node_id, data=BZTreeFile(path))
 
-  for index, (old_block, new_block) in enumerate(replacements):
-    replacement = BZReplacement(old_block=old_block, new_block=new_block)
+  for index, replacement in enumerate(replacements):
     tree.create_node(
-      f"{old_block} -> {new_block}",
+      replacement_label(replacement),
       tree_replacement_id(path, index),
       parent=file_node_id,
       data=replacement,
