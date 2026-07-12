@@ -246,7 +246,7 @@ def replace_block_str(block: str, state: BZState) -> str | None:
   pattern_result, matching_patterns = match_block_pattern(block, rules.replace_block_pattern) if rules.replace_block_pattern else (None, [])
   
   if has_exact and matching_patterns:
-    msg = f"'{block}' rules are ambigious: matches exact rule and pattern(s): {matching_patterns}"
+    msg = f"'{block}' rules are ambiguous: matches exact rule and pattern(s): {matching_patterns}"
     if state.run.allow_overlaps:
       print(f"WARN: {msg} (using exact)")
     else:
