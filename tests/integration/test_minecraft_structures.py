@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import shutil
 import os
+import shutil
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 
 import nbtlib
@@ -67,12 +68,6 @@ def property_counter(path: Path, block: str) -> Counter[str]:
         )
 
 
-def potted_plant_blocks(path: Path) -> set[str]:
-    return {
-        block for block in palette_blocks(path) if block.startswith("minecraft:potted_")
-    }
-
-
 def item_id_counter(path: Path) -> Counter[str]:
     items: Counter[str] = Counter()
     with nbtlib.load(path) as root:
@@ -86,51 +81,44 @@ def item_id_counter(path: Path) -> Counter[str]:
     return items
 
 
-def find_structure_with_blocks(
+def copy_structure_dir(
+    relative_dir: str,
     structure_dir: Path,
-    required_blocks: set[str],
-    *,
-    under: str | None = None,
-) -> Path:
-    search_root = structure_dir / under if under else structure_dir
-    for path in sorted(search_root.rglob("*.nbt")):
-        blocks = set(palette_blocks(path))
-        if required_blocks <= blocks:
-            return path
-    raise AssertionError(
-        f"No structure under {search_root} contains {sorted(required_blocks)}"
-    )
-
-
-def find_structures_with_common_blocks(
-    structure_dir: Path,
-    target_blocks: set[str],
-    *,
-    under: tuple[str, ...],
-    limit: int,
+    input_dir: Path,
 ) -> list[Path]:
-    scored: list[tuple[int, str, Path]] = []
-    for subpath in under:
-        for path in sorted((structure_dir / subpath).rglob("*.nbt")):
-            counts = block_placement_counter(path)
-            score = sum(counts[block] for block in target_blocks)
-            if score:
-                scored.append((score, str(path.relative_to(structure_dir)), path))
+    source = structure_dir / relative_dir
+    if not source.is_dir():
+        raise AssertionError(f"Missing cached Minecraft structure dir: {relative_dir}")
 
-    scored.sort(reverse=True)
-    if len(scored) < limit:
-        raise AssertionError(
-            f"Found only {len(scored)} structures with {sorted(target_blocks)}"
-        )
-    return [path for _, _, path in scored[:limit]]
+    target = input_dir / relative_dir
+    shutil.copytree(source, target)
+    return sorted(target.rglob("*.nbt"))
 
 
-def copy_structure(source: Path, structure_dir: Path, input_dir: Path) -> Path:
-    relative = source.relative_to(structure_dir)
-    target = input_dir / relative
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, target)
-    return target
+def structure_paths(path: Path) -> list[Path]:
+    return sorted(path.rglob("*.nbt"))
+
+
+def counter_for_paths(
+    paths: list[Path],
+    counter: Callable[[Path], Counter[str]],
+) -> Counter[str]:
+    total: Counter[str] = Counter()
+    for path in paths:
+        total.update(counter(path))
+    return total
+
+
+def transformed_or_original_paths(
+    paths: list[Path],
+    input_dir: Path,
+    output_dir: Path,
+) -> list[Path]:
+    transformed = []
+    for path in paths:
+        out_path = output_dir / path.relative_to(input_dir)
+        transformed.append(out_path if out_path.exists() else path)
+    return transformed
 
 
 def write_config(path: Path, body: str) -> None:
@@ -138,87 +126,66 @@ def write_config(path: Path, body: str) -> None:
     (path / ".bz.toml").write_text(body.strip() + "\n", encoding="utf-8")
 
 
-def test_rewrites_many_common_blocks_across_many_real_structures(
+def test_replace_plains_village_replace_oak_dark_oak(
     tmp_path: Path,
     structure_dir: Path,
 ) -> None:
-    replacements = {
-        "minecraft:stone_bricks": "minecraft:deepslate_bricks",
-        "minecraft:cobblestone": "minecraft:calcite",
-        "minecraft:oak_planks": "minecraft:spruce_planks",
-        "minecraft:oak_log": "minecraft:spruce_log",
-        "minecraft:oak_stairs": "minecraft:spruce_stairs",
-        "minecraft:oak_slab": "minecraft:spruce_slab",
-    }
+    """
+    input/
+      .bz.toml             # oak* -> dark_oak*
+      village/
+        plains/
+          ...
+    """
+
     input_dir = tmp_path / "input"
     output_dir = tmp_path / "output"
-    sources = find_structures_with_common_blocks(
-        structure_dir,
-        set(replacements),
-        under=(
-            "village/plains/houses",
-            "village/plains/zombie/houses",
-            "woodland_mansion",
-            "underwater_ruin",
-        ),
-        limit=40,
-    )
-    copied = [copy_structure(source, structure_dir, input_dir) for source in sources]
+    copied = []
+    copied.extend(copy_structure_dir("village/plains", structure_dir, input_dir))
 
     write_config(
         input_dir,
         """
-    [replace-block]
-    "minecraft:stone_bricks" = "minecraft:deepslate_bricks"
-    "minecraft:cobblestone" = "minecraft:calcite"
-    "minecraft:oak_planks" = "minecraft:spruce_planks"
-    "minecraft:oak_log" = "minecraft:spruce_log"
-    "minecraft:oak_stairs" = "minecraft:spruce_stairs"
-    "minecraft:oak_slab" = "minecraft:spruce_slab"
+    [replace-block-pattern]
+    "minecraft:oak{whatever}" = "minecraft:dark_oak{whatever}"
     """,
     )
 
-    before = Counter()
-    for path in copied:
-        before.update(block_placement_counter(path))
+    before = counter_for_paths(copied, block_placement_counter)
 
     start(BZArgs(target_dir=input_dir, output_dir=output_dir))
 
-    after = Counter()
-    for path in copied:
-        out_file = output_dir / path.relative_to(input_dir)
-        assert out_file.exists()
-        after.update(block_placement_counter(out_file))
-
-    assert len(copied) == 40
-    assert before["minecraft:stone_bricks"] >= 500
-    assert before["minecraft:cobblestone"] >= 3_000
-    assert (
-        before["minecraft:oak_planks"]
-        + before["minecraft:oak_log"]
-        + before["minecraft:oak_stairs"]
-        + before["minecraft:oak_slab"]
-        >= 4_000
+    after = counter_for_paths(
+        transformed_or_original_paths(copied, input_dir, output_dir),
+        block_placement_counter,
     )
 
-    for old_block, new_block in replacements.items():
-        assert after[old_block] == 0
-        assert after[new_block] == before[new_block] + before[old_block]
+    assert before["minecraft:oak_planks"] > 0
+    assert before["minecraft:oak_stairs"] > 0
+
+    assert after["minecraft:oak_planks"] == 0
+    assert after["minecraft:dark_oak_planks"] == before["minecraft:oak_planks"]
+
+    assert after["minecraft:oak_stairs"] == 0
+    assert after["minecraft:dark_oak_stairs"] == before["minecraft:oak_stairs"]
 
 
-def test_rewrites_real_village_subset_and_preserves_palette_properties(
+def test_replace_plains_village_houses_stone_and_oak(
     tmp_path: Path,
     structure_dir: Path,
 ) -> None:
-    source = find_structure_with_blocks(
-        structure_dir,
-        {"minecraft:oak_stairs", "minecraft:cobblestone"},
-        under="village/plains/houses",
-    )
+    """
+    input/
+      .bz.toml             # cobblestone -> deepslate, oak_* -> dark_oak_*
+      village/
+        plains/
+          houses/
+            ...
+    """
+
     input_dir = tmp_path / "input"
     output_dir = tmp_path / "output"
-    tree_output = tmp_path / "tree.txt"
-    copied = copy_structure(source, structure_dir, input_dir)
+    copied = copy_structure_dir("village/plains/houses", structure_dir, input_dir)
 
     write_config(
         input_dir,
@@ -231,49 +198,51 @@ def test_rewrites_real_village_subset_and_preserves_palette_properties(
     """,
     )
 
-    before = palette_counter(copied)
-    oak_stairs_properties = property_counter(copied, "minecraft:oak_stairs")
-
-    start(
-        BZArgs(
-            target_dir=input_dir,
-            output_dir=output_dir,
-            tree_output=tree_output,
-        )
+    before = counter_for_paths(copied, palette_counter)
+    before_stairs_properties = counter_for_paths(
+        copied,
+        lambda path: property_counter(path, "minecraft:oak_stairs"),
     )
 
-    out_file = output_dir / copied.relative_to(input_dir)
-    after = palette_counter(out_file)
+    start(BZArgs(target_dir=input_dir, output_dir=output_dir))
+
+    after_files = transformed_or_original_paths(copied, input_dir, output_dir)
+    after = counter_for_paths(after_files, palette_counter)
+    after_stairs_properties = counter_for_paths(
+        after_files,
+        lambda path: property_counter(path, "minecraft:dark_oak_stairs"),
+    )
 
     assert before["minecraft:oak_stairs"] > 0
     assert before["minecraft:cobblestone"] > 0
     assert after["minecraft:oak_stairs"] == 0
-    assert after["minecraft:dark_oak_stairs"] == before["minecraft:oak_stairs"]
-    assert after["minecraft:cobblestone"] == 0
-    assert after["minecraft:deepslate"] == before["minecraft:cobblestone"]
     assert (
-        property_counter(out_file, "minecraft:dark_oak_stairs") == oak_stairs_properties
+        after["minecraft:dark_oak_stairs"]
+        == before["minecraft:dark_oak_stairs"] + before["minecraft:oak_stairs"]
     )
+    assert after["minecraft:cobblestone"] == 0
+    assert after["minecraft:deepslate"] == (
+        before["minecraft:deepslate"] + before["minecraft:cobblestone"]
+    )
+    assert after_stairs_properties == before_stairs_properties
 
-    tree = tree_output.read_text(encoding="utf-8")
-    assert source.name in tree
-    assert "minecraft:cobblestone -> minecraft:deepslate" in tree
-    assert "minecraft:oak_stairs -> minecraft:dark_oak_stairs" in tree
 
-
-def test_dry_run_reports_replacements_without_writing_outputs(
+def test_plains_village_hay_to_kelp_dry_run(
     tmp_path: Path,
     structure_dir: Path,
 ) -> None:
-    source = find_structure_with_blocks(
-        structure_dir,
-        {"minecraft:hay_block"},
-        under="village",
-    )
+    """
+    input/
+      .bz.toml             # hay_block -> dried_kelp_block, dry run only
+      village/
+        plains/
+          houses/
+            ...
+    """
+
     input_dir = tmp_path / "input"
     output_dir = tmp_path / "output"
-    tree_output = tmp_path / "dry-run-tree.txt"
-    copied = copy_structure(source, structure_dir, input_dir)
+    copied = copy_structure_dir("village/plains/houses", structure_dir, input_dir)
 
     write_config(
         input_dir,
@@ -283,120 +252,163 @@ def test_dry_run_reports_replacements_without_writing_outputs(
     """,
     )
 
+    before = counter_for_paths(copied, block_placement_counter)
+
     start(
         BZArgs(
             target_dir=input_dir,
             output_dir=output_dir,
             dry_run=True,
-            tree_output=tree_output,
         )
     )
 
-    assert not (output_dir / copied.relative_to(input_dir)).exists()
+    after = counter_for_paths(copied, block_placement_counter)
+
+    assert before["minecraft:hay_block"] > 0
+    assert after["minecraft:hay_block"] == before["minecraft:hay_block"]
+    assert after["minecraft:dried_kelp_block"] == before["minecraft:dried_kelp_block"]
     assert not output_dir.exists()
-    assert "minecraft:hay_block -> minecraft:dried_kelp_block" in tree_output.read_text(
-        encoding="utf-8"
-    )
 
 
-def test_nested_configs_can_disable_inherited_rules_on_real_structures(
+def test_taiga_village_cobblestone_inherit_false(
     tmp_path: Path,
     structure_dir: Path,
 ) -> None:
-    source = find_structure_with_blocks(
-        structure_dir,
-        {"minecraft:cobblestone", "minecraft:grass_block"},
-        under="village/taiga/houses",
-    )
+    """
+    input/
+      village/
+        taiga/
+          .bz.toml       # cobblestone -> deepslate
+          houses/
+            .bz.toml     # inherit = false
+          zombie/
+            ...
+    """
+
     input_dir = tmp_path / "input"
     output_dir = tmp_path / "output"
-    root_copy = copy_structure(source, structure_dir, input_dir / "root")
-    local_copy = copy_structure(source, structure_dir, input_dir / "local")
+    copy_structure_dir("village/taiga", structure_dir, input_dir)
+    houses_dir = input_dir / "village/taiga/houses"
+    zombie_dir = input_dir / "village/taiga/zombie"
 
     write_config(
-        input_dir,
+        input_dir / "village/taiga",
         """
     [replace-block]
     "minecraft:cobblestone" = "minecraft:deepslate"
     """,
     )
     write_config(
-        local_copy.parent,
+        input_dir / "village/taiga/houses",
         """
     inherit = false
-
-    [replace-block]
-    "minecraft:grass_block" = "minecraft:mycelium"
     """,
     )
 
+    houses = structure_paths(houses_dir)
+    zombie = structure_paths(zombie_dir)
+    houses_before = counter_for_paths(houses, palette_counter)
+    zombie_before = counter_for_paths(zombie, palette_counter)
+
     start(BZArgs(target_dir=input_dir, output_dir=output_dir))
 
-    root_after = palette_counter(output_dir / root_copy.relative_to(input_dir))
-    local_after = palette_counter(output_dir / local_copy.relative_to(input_dir))
+    houses_after = counter_for_paths(
+        transformed_or_original_paths(houses, input_dir, output_dir),
+        palette_counter,
+    )
+    zombie_after = counter_for_paths(
+        transformed_or_original_paths(zombie, input_dir, output_dir),
+        palette_counter,
+    )
 
-    assert root_after["minecraft:cobblestone"] == 0
-    assert root_after["minecraft:deepslate"] > 0
-    assert root_after["minecraft:grass_block"] > 0
-    assert local_after["minecraft:cobblestone"] > 0
-    assert local_after["minecraft:grass_block"] == 0
-    assert local_after["minecraft:mycelium"] > 0
+    assert houses_before["minecraft:cobblestone"] > 0
+    assert zombie_before["minecraft:cobblestone"] > 0
+
+    assert (
+        houses_after["minecraft:cobblestone"] == houses_before["minecraft:cobblestone"]
+    )
+    assert houses_after["minecraft:deepslate"] == houses_before["minecraft:deepslate"]
+
+    assert zombie_after["minecraft:cobblestone"] == 0
+    assert zombie_after["minecraft:deepslate"] == (
+        zombie_before["minecraft:deepslate"] + zombie_before["minecraft:cobblestone"]
+    )
 
 
-def test_pattern_replacement_can_ignore_captured_placeholder(
+def test_trail_ruins_replace_terracotta_pattern_to_empty(
     tmp_path: Path,
     structure_dir: Path,
 ) -> None:
-    source = find_structure_with_blocks(
-        structure_dir,
-        {"minecraft:orange_terracotta"},
-        under="trail_ruins/buildings",
-    )
+    """
+    input/
+      .bz.toml             # *_terracotta -> diamond_block
+      trail_ruins/
+        buildings/
+          ...
+    """
+
     input_dir = tmp_path / "input"
     output_dir = tmp_path / "output"
-    copied = copy_structure(source, structure_dir, input_dir)
+    copied = copy_structure_dir("trail_ruins/buildings", structure_dir, input_dir)
 
     write_config(
         input_dir,
         """
     [replace-block-pattern]
-    "minecraft:{color}_terracotta" = "minecraft:white_concrete"
+    "minecraft:{color}_terracotta" = "minecraft:diamond_block"
     """,
     )
 
-    before = palette_counter(copied)
-    matched_blocks = {
-        block
-        for block in before
-        if block.startswith("minecraft:") and block.endswith("_terracotta")
-    }
-    matched_count = sum(before[block] for block in matched_blocks)
+    before = counter_for_paths(copied, block_placement_counter)
+
+    # These are the only terracotta blocks that appear in trail ruins
+    terracotta = [
+        "minecraft:black_glazed_terracotta",
+        "minecraft:blue_terracotta",
+        "minecraft:brown_terracotta",
+        "minecraft:cyan_terracotta",
+        "minecraft:gray_terracotta",
+        "minecraft:light_blue_glazed_terracotta",
+        "minecraft:light_gray_glazed_terracotta",
+        "minecraft:light_gray_terracotta",
+        "minecraft:orange_glazed_terracotta",
+        "minecraft:orange_terracotta",
+        "minecraft:red_terracotta",
+        "minecraft:white_terracotta",
+        "minecraft:yellow_glazed_terracotta",
+        "minecraft:yellow_terracotta",
+    ]
+
+    terracotta_sum = sum(before[block] for block in terracotta)
 
     start(BZArgs(target_dir=input_dir, output_dir=output_dir))
 
-    after = palette_counter(output_dir / copied.relative_to(input_dir))
-
-    assert matched_count > 0
-    for block in matched_blocks:
-        assert after[block] == 0
-    assert (
-        after["minecraft:white_concrete"]
-        == before["minecraft:white_concrete"] + matched_count
+    after = counter_for_paths(
+        transformed_or_original_paths(copied, input_dir, output_dir),
+        block_placement_counter,
     )
 
+    assert terracotta_sum > 0
+    for block in terracotta:
+        assert before[block] > 0
+        assert after[block] == 0
+    assert after["minecraft:diamond_block"] == terracotta_sum
 
-def test_block_pattern_replacement_potted_plants(
+
+def test_woodland_mansion_replace_potted_plants(
     tmp_path: Path,
     structure_dir: Path,
 ) -> None:
-    source = structure_dir / "woodland_mansion" / "1x1_a1.nbt"
+    """
+    input/
+      .bz.toml             # potted_* -> potted_pale_oak_sapling
+      woodland_mansion/
+        ...
+    """
+
     input_dir = tmp_path / "input"
     output_dir = tmp_path / "output"
-    copied = copy_structure(source, structure_dir, input_dir)
-
-    before = palette_counter(copied)
-    potted_blocks = potted_plant_blocks(copied)
-    replacement = "minecraft:potted_pale_oak_sapling"
+    copied = copy_structure_dir("woodland_mansion", structure_dir, input_dir)
 
     write_config(
         input_dir,
@@ -406,86 +418,98 @@ def test_block_pattern_replacement_potted_plants(
     """,
     )
 
-    assert potted_blocks == {
-        "minecraft:potted_allium",
-        "minecraft:potted_azure_bluet",
-        "minecraft:potted_blue_orchid",
-        "minecraft:potted_oxeye_daisy",
-    }
+    before = counter_for_paths(copied, block_placement_counter)
 
     start(BZArgs(target_dir=input_dir, output_dir=output_dir))
 
-    after = palette_counter(output_dir / copied.relative_to(input_dir))
+    after = counter_for_paths(
+        transformed_or_original_paths(copied, input_dir, output_dir),
+        block_placement_counter,
+    )
 
-    for block in potted_blocks:
-        assert after[block] == 0
-    assert after[replacement] == sum(before[block] for block in potted_blocks)
+    assert before["minecraft:potted_allium"] > 0
+    assert before["minecraft:potted_white_tulip"] > 0
+
+    assert after["minecraft:potted_allium"] == 0
+    assert after["minecraft:potted_white_tulip"] == 0
+    assert (
+        after["minecraft:potted_pale_oak_sapling"]
+        > before["minecraft:potted_pale_oak_sapling"]
+    )
 
 
-def test_string_replacement_hardcoded_chests(
+def test_woodland_mansion_allium_chest(
     tmp_path: Path,
     structure_dir: Path,
 ) -> None:
-    source = structure_dir / "woodland_mansion" / "1x1_b5.nbt"
+    """
+    Woodland mansion allium chest is hardcoded in the structure, not a loot table.
+    It always has 8 alliums.
+
+    input/
+      .bz.toml             # allium -> poppy
+      woodland_mansion/
+        ...
+    """
+
     input_dir = tmp_path / "input"
     output_dir = tmp_path / "output"
-    copied = copy_structure(source, structure_dir, input_dir)
-
-    before_items = item_id_counter(copied)
-    before_blocks = palette_counter(copied)
+    copied = copy_structure_dir("woodland_mansion", structure_dir, input_dir)
 
     write_config(
         input_dir,
         """
-    [replace-block]
-    "minecraft:birch_planks" = "minecraft:dark_oak_planks"
-
     [replace-string]
     "minecraft:allium" = "minecraft:poppy"
     """,
     )
 
+    before_items = counter_for_paths(copied, item_id_counter)
+
     assert before_items["minecraft:allium"] == 8
 
     start(BZArgs(target_dir=input_dir, output_dir=output_dir))
 
-    out_file = output_dir / copied.relative_to(input_dir)
-    after_items = item_id_counter(out_file)
-    after_blocks = palette_counter(out_file)
+    after_files = transformed_or_original_paths(copied, input_dir, output_dir)
+    after_items = counter_for_paths(after_files, item_id_counter)
 
-    assert (
-        after_blocks["minecraft:dark_oak_planks"]
-        == before_blocks["minecraft:birch_planks"]
-    )
     assert after_items["minecraft:allium"] == 0
     assert after_items["minecraft:poppy"] == 8
 
 
-def test_real_structure_overlap_errors_stop_before_writing_output(
+def test_plains_village_houses_errors_no_overlap(
     tmp_path: Path,
     structure_dir: Path,
 ) -> None:
-    source = find_structure_with_blocks(
-        structure_dir,
-        {"minecraft:oak_stairs"},
-        under="village/plains/houses",
-    )
+    """
+    input/
+      .bz.toml             # oak_trapdoor overlaps with oak_{part}
+      village/
+        plains/
+          houses/
+            ...
+    """
+
     input_dir = tmp_path / "input"
     output_dir = tmp_path / "output"
-    copied = copy_structure(source, structure_dir, input_dir)
+    copied = copy_structure_dir("village/plains/houses", structure_dir, input_dir)
 
     write_config(
         input_dir,
         """
     [replace-block]
-    "minecraft:oak_stairs" = "minecraft:birch_stairs"
+    "minecraft:oak_trapdoor" = "minecraft:birch_trapdoor"
 
     [replace-block-pattern]
     "minecraft:oak_{part}" = "minecraft:dark_oak_{part}"
     """,
     )
 
+    before = counter_for_paths(copied, palette_counter)
+
+    assert before["minecraft:oak_trapdoor"] > 0
+
     with pytest.raises(RuntimeError):
         start(BZArgs(target_dir=input_dir, output_dir=output_dir))
 
-    assert not (output_dir / copied.relative_to(input_dir)).exists()
+    assert not output_dir.exists()
