@@ -36,9 +36,19 @@ def structure_dir() -> Path:
 
 def palette_blocks(path: Path) -> list[str]:
     with nbtlib.load(path) as root:
-        if "palette" not in root:
+        if "palette" in root:
+            palettes = [root["palette"]]
+        elif "palettes" in root:
+            palettes = root["palettes"]
+        else:
             return []
-        return [str(entry["Name"]) for entry in root["palette"] if "Name" in entry]
+
+        return [
+            str(entry["Name"])
+            for palette in palettes
+            for entry in palette
+            if "Name" in entry
+        ]
 
 
 def palette_counter(path: Path) -> Counter[str]:
@@ -47,10 +57,13 @@ def palette_counter(path: Path) -> Counter[str]:
 
 def block_placement_counter(path: Path) -> Counter[str]:
     with nbtlib.load(path) as root:
-        if "palette" not in root:
+        if "palette" in root:
+            palette = [str(entry.get("Name", "")) for entry in root["palette"]]
+        elif "palettes" in root and root["palettes"]:
+            palette = [str(entry.get("Name", "")) for entry in root["palettes"][0]]
+        else:
             return Counter()
 
-        palette = [str(entry.get("Name", "")) for entry in root["palette"]]
         blocks: Counter[str] = Counter()
         for block in root.get("blocks", []):
             state = int(block.get("state", -1))
@@ -61,9 +74,17 @@ def block_placement_counter(path: Path) -> Counter[str]:
 
 def property_counter(path: Path, block: str) -> Counter[str]:
     with nbtlib.load(path) as root:
+        if "palette" in root:
+            palettes = [root["palette"]]
+        elif "palettes" in root:
+            palettes = root["palettes"]
+        else:
+            return Counter()
+
         return Counter(
             str(entry.get("Properties", {}))
-            for entry in root["palette"]
+            for palette in palettes
+            for entry in palette
             if str(entry.get("Name", "")) == block
         )
 
@@ -395,11 +416,53 @@ def test_trail_ruins_replace_terracotta_pattern_to_empty(
     assert after["minecraft:diamond_block"] == terracotta_sum
 
 
+def test_shipwreck_replace_birch_wood(
+    tmp_path: Path,
+    structure_dir: Path,
+) -> None:
+    """
+    Shipwrecks use "palettes" plural instead of palette singular.
+
+    input/
+      .bz.toml             # birch_planks -> diamond_block
+      shipwreck/
+        ...
+    """
+
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    copied = copy_structure_dir("shipwreck", structure_dir, input_dir)
+
+    write_config(
+        input_dir,
+        """
+    [replace-block]
+    "minecraft:birch_planks" = "minecraft:diamond_block"
+    """,
+    )
+
+    before = counter_for_paths(copied, palette_counter)
+
+    start(BZArgs(target_dir=input_dir, output_dir=output_dir))
+
+    after = counter_for_paths(
+        transformed_or_original_paths(copied, input_dir, output_dir),
+        palette_counter,
+    )
+
+    assert before["minecraft:birch_planks"] > 0
+
+    assert after["minecraft:birch_planks"] == 0
+    assert after["minecraft:diamond_block"] == before["minecraft:birch_planks"]
+
+
 def test_woodland_mansion_replace_potted_plants(
     tmp_path: Path,
     structure_dir: Path,
 ) -> None:
     """
+    Different potted plants are their own block.
+
     input/
       .bz.toml             # potted_* -> potted_pale_oak_sapling
       woodland_mansion/

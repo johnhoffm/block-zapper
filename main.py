@@ -339,22 +339,32 @@ def transform_nbt(root, state: BZState) -> list[BZReplacement]:
   """
   replacements = []
 
-  if "palette" not in root:
+  if "palette" in root:
+    palettes = [("palette", root["palette"])]
+  # Shipwrecks use "palettes" plural since they have randomized material sets
+  elif "palettes" in root:
+    palettes = [
+      (f"palettes[{palette_index}]", palette)
+      for palette_index, palette in enumerate(root["palettes"])
+    ]
+  else:
     raise ValueError("No palette found in nbt data")
-  for index, entry in enumerate(root["palette"]):
-    if "Name" not in entry:
-      continue
-    block = str(entry["Name"])
-    new_block = replace_block_str(block, state)
-    
-    if new_block:
-      entry["Name"] = nbtlib.tag.String(new_block)
-      replacements.append(BZReplacement(
-        kind=BZReplacementKind.BLOCK,
-        old_value=block,
-        new_value=new_block,
-        location=f"palette[{index}].Name",
-      ))
+
+  for palette_location, palette in palettes:
+    for index, entry in enumerate(palette):
+      if "Name" not in entry:
+        continue
+      block = str(entry["Name"])
+      new_block = replace_block_str(block, state)
+      
+      if new_block:
+        entry["Name"] = nbtlib.tag.String(new_block)
+        replacements.append(BZReplacement(
+          kind=BZReplacementKind.BLOCK,
+          old_value=block,
+          new_value=new_block,
+          location=f"{palette_location}[{index}].Name",
+        ))
 
   if state.rules.replace_string:
     replacements.extend(replace_payload_strings(root, state.rules.replace_string))

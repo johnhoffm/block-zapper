@@ -46,6 +46,45 @@ class TestReplaceNbtStrings:
 
 
 class TestTransformNbt:
+  def test_replaces_blocks_in_plural_palettes(self):
+    root = nbtlib.Compound({
+      "palettes": nbtlib.tag.List[nbtlib.tag.List[nbtlib.tag.Compound]]([
+        nbtlib.tag.List[nbtlib.tag.Compound]([
+          nbtlib.tag.Compound({
+            "Name": nbtlib.tag.String("minecraft:oak_planks"),
+          }),
+        ]),
+        nbtlib.tag.List[nbtlib.tag.Compound]([
+          nbtlib.tag.Compound({
+            "Name": nbtlib.tag.String("minecraft:spruce_planks"),
+          }),
+        ]),
+      ]),
+      "blocks": nbtlib.tag.List[nbtlib.tag.Compound]([]),
+    })
+    state = make_state(replace_block_pattern={
+      "minecraft:{wood}_planks": "minecraft:bedrock",
+    })
+
+    replacements = transform_nbt(root, state)
+
+    assert str(root["palettes"][0][0]["Name"]) == "minecraft:bedrock"
+    assert str(root["palettes"][1][0]["Name"]) == "minecraft:bedrock"
+    assert replacements == [
+      BZReplacement(
+        kind=BZReplacementKind.BLOCK,
+        old_value="minecraft:oak_planks",
+        new_value="minecraft:bedrock",
+        location="palettes[0][0].Name",
+      ),
+      BZReplacement(
+        kind=BZReplacementKind.BLOCK,
+        old_value="minecraft:spruce_planks",
+        new_value="minecraft:bedrock",
+        location="palettes[1][0].Name",
+      ),
+    ]
+
   def test_string_replacement_does_not_modify_palette_block_states(self):
     root = nbtlib.Compound({
       "palette": nbtlib.tag.List[nbtlib.tag.Compound]([
