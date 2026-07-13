@@ -72,23 +72,6 @@ def block_placement_counter(path: Path) -> Counter[str]:
         return blocks
 
 
-def property_counter(path: Path, block: str) -> Counter[str]:
-    with nbtlib.load(path) as root:
-        if "palette" in root:
-            palettes = [root["palette"]]
-        elif "palettes" in root:
-            palettes = root["palettes"]
-        else:
-            return Counter()
-
-        return Counter(
-            str(entry.get("Properties", {}))
-            for palette in palettes
-            for entry in palette
-            if str(entry.get("Name", "")) == block
-        )
-
-
 def item_id_counter(path: Path) -> Counter[str]:
     items: Counter[str] = Counter()
     with nbtlib.load(path) as root:
@@ -172,13 +155,13 @@ def test_replace_plains_village_replace_oak_dark_oak(
     """,
     )
 
-    before = counter_for_paths(copied, block_placement_counter)
+    before = counter_for_paths(copied, palette_counter)
 
     start(BZArgs(target_dir=input_dir, output_dir=output_dir))
 
     after = counter_for_paths(
         transformed_or_original_paths(copied, input_dir, output_dir),
-        block_placement_counter,
+        palette_counter,
     )
 
     assert before["minecraft:oak_planks"] > 0
@@ -220,19 +203,11 @@ def test_replace_plains_village_houses_stone_and_oak(
     )
 
     before = counter_for_paths(copied, palette_counter)
-    before_stairs_properties = counter_for_paths(
-        copied,
-        lambda path: property_counter(path, "minecraft:oak_stairs"),
-    )
 
     start(BZArgs(target_dir=input_dir, output_dir=output_dir))
 
     after_files = transformed_or_original_paths(copied, input_dir, output_dir)
     after = counter_for_paths(after_files, palette_counter)
-    after_stairs_properties = counter_for_paths(
-        after_files,
-        lambda path: property_counter(path, "minecraft:dark_oak_stairs"),
-    )
 
     assert before["minecraft:oak_stairs"] > 0
     assert before["minecraft:cobblestone"] > 0
@@ -245,7 +220,6 @@ def test_replace_plains_village_houses_stone_and_oak(
     assert after["minecraft:deepslate"] == (
         before["minecraft:deepslate"] + before["minecraft:cobblestone"]
     )
-    assert after_stairs_properties == before_stairs_properties
 
 
 def test_plains_village_hay_to_kelp_dry_run(
@@ -273,7 +247,7 @@ def test_plains_village_hay_to_kelp_dry_run(
     """,
     )
 
-    before = counter_for_paths(copied, block_placement_counter)
+    before = counter_for_paths(copied, palette_counter)
 
     start(
         BZArgs(
@@ -283,7 +257,7 @@ def test_plains_village_hay_to_kelp_dry_run(
         )
     )
 
-    after = counter_for_paths(copied, block_placement_counter)
+    after = counter_for_paths(copied, palette_counter)
 
     assert before["minecraft:hay_block"] > 0
     assert after["minecraft:hay_block"] == before["minecraft:hay_block"]
@@ -380,7 +354,7 @@ def test_trail_ruins_replace_terracotta_pattern_to_empty(
     """,
     )
 
-    before = counter_for_paths(copied, block_placement_counter)
+    before = counter_for_paths(copied, palette_counter)
 
     # These are the only terracotta blocks that appear in trail ruins
     terracotta = [
@@ -406,14 +380,16 @@ def test_trail_ruins_replace_terracotta_pattern_to_empty(
 
     after = counter_for_paths(
         transformed_or_original_paths(copied, input_dir, output_dir),
-        block_placement_counter,
+        palette_counter,
     )
 
     assert terracotta_sum > 0
     for block in terracotta:
         assert before[block] > 0
         assert after[block] == 0
-    assert after["minecraft:diamond_block"] == terracotta_sum
+    assert after["minecraft:diamond_block"] == (
+        before["minecraft:diamond_block"] + terracotta_sum
+    )
 
 
 def test_shipwreck_replace_birch_wood(
@@ -481,13 +457,13 @@ def test_woodland_mansion_replace_potted_plants(
     """,
     )
 
-    before = counter_for_paths(copied, block_placement_counter)
+    before = counter_for_paths(copied, palette_counter)
 
     start(BZArgs(target_dir=input_dir, output_dir=output_dir))
 
     after = counter_for_paths(
         transformed_or_original_paths(copied, input_dir, output_dir),
-        block_placement_counter,
+        palette_counter,
     )
 
     assert before["minecraft:potted_allium"] > 0

@@ -46,6 +46,42 @@ class TestReplaceNbtStrings:
 
 
 class TestTransformNbt:
+  def test_block_replacement_preserves_palette_properties(self):
+    root = nbtlib.Compound({
+      "palette": nbtlib.tag.List[nbtlib.tag.Compound]([
+        nbtlib.tag.Compound({
+          "Name": nbtlib.tag.String("minecraft:oak_stairs"),
+          "Properties": nbtlib.tag.Compound({
+            "facing": nbtlib.tag.String("north"),
+            "half": nbtlib.tag.String("bottom"),
+            "shape": nbtlib.tag.String("straight"),
+          }),
+        }),
+      ]),
+      "blocks": nbtlib.tag.List[nbtlib.tag.Compound]([]),
+    })
+    state = make_state(replace_block={
+      "minecraft:oak_stairs": "minecraft:dark_oak_stairs",
+    })
+
+    replacements = transform_nbt(root, state)
+
+    entry = root["palette"][0]
+    assert str(entry["Name"]) == "minecraft:dark_oak_stairs"
+    assert dict(entry["Properties"]) == {
+      "facing": "north",
+      "half": "bottom",
+      "shape": "straight",
+    }
+    assert replacements == [
+      BZReplacement(
+        kind=BZReplacementKind.BLOCK,
+        old_value="minecraft:oak_stairs",
+        new_value="minecraft:dark_oak_stairs",
+        location="palette[0].Name",
+      ),
+    ]
+
   def test_replaces_blocks_in_plural_palettes(self):
     root = nbtlib.Compound({
       "palettes": nbtlib.tag.List[nbtlib.tag.List[nbtlib.tag.Compound]]([
