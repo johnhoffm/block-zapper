@@ -27,12 +27,14 @@ class BZConfig:
   inherit: bool = True
   replace_block: dict[str, str] = field(default_factory=dict)
   replace_block_pattern: dict[str, str] = field(default_factory=dict)
+  replace_block_regex: dict[str, str] = field(default_factory=dict)
   replace_string: dict[str, str] = field(default_factory=dict)
 
 @dataclass
 class BZRules:
   replace_block: dict[str, str] = field(default_factory=dict)
   replace_block_pattern: dict[str, str] = field(default_factory=dict)
+  replace_block_regex: dict[str, str] = field(default_factory=dict)
   replace_string: dict[str, str] = field(default_factory=dict)
 
 @dataclass(frozen=True)
@@ -139,12 +141,20 @@ def load_config(path: Path) -> BZConfig | None:
       data = tomllib.load(f)
   except Exception as e:
     raise RuntimeError(f"Failed to parse config file {config}") from e
+
+  replace_block_regex = data.get("replace-block-regex", {})
+  for regex in replace_block_regex:
+    try:
+      re.compile(regex)
+    except re.error as error:
+      raise RuntimeError(f"Invalid replace-block-regex '{regex}' in {config}: {error}") from error
   
   return BZConfig(
           recursive=data.get("recursive", True),
           inherit=data.get("inherit", True),
           replace_block=data.get("replace-block", {}),
           replace_block_pattern=data.get("replace-block-pattern", {}),
+          replace_block_regex=replace_block_regex,
           replace_string=data.get("replace-string", {}),
       )
 
@@ -155,6 +165,7 @@ def merge_state(base: BZState, config: BZConfig, subtree: str | None = None) -> 
     rules=BZRules(
       replace_block=base_rules.replace_block | config.replace_block,
       replace_block_pattern=base_rules.replace_block_pattern | config.replace_block_pattern,
+      replace_block_regex=base_rules.replace_block_regex | config.replace_block_regex,
       replace_string=base_rules.replace_string | config.replace_string,
     ),
     run=base.run,
@@ -236,6 +247,30 @@ def match_block_pattern(block: str, patterns: dict) -> tuple[str | None, list[st
   
   return result, matches
 
+def match_block_regex(block: str, regexes: dict) -> tuple[str | None, list[str]]:
+  """
+  Match a block against full regular expressions with named capture groups.
+  Named groups can be referenced in replacement strings with {name}.
+  Returns (replacement string or None, list of all matching regex keys).
+  """
+  matches = []
+  result = None
+
+  for regex, replacement in regexes.items():
+    try:
+      match = re.fullmatch(regex, block)
+    except re.error as error:
+      raise RuntimeError(f"Invalid replace-block-regex '{regex}': {error}") from error
+
+    if match:
+      matches.append(regex)
+      if result is None:
+        result = replacement
+        for name, value in match.groupdict().items():
+          result = result.replace(f"{{{name}}}", value or "")
+
+  return result, matches
+
 def replace_block_str(block: str, state: BZState) -> str | None:
   """
   Get replacement for a block, checking exact matches first then patterns.
@@ -244,26 +279,30 @@ def replace_block_str(block: str, state: BZState) -> str | None:
   rules = state.rules
   has_exact = block in rules.replace_block
   pattern_result, matching_patterns = match_block_pattern(block, rules.replace_block_pattern) if rules.replace_block_pattern else (None, [])
+  regex_result, matching_regexes = match_block_regex(block, rules.replace_block_regex) if rules.replace_block_regex else (None, [])
+  matching_rules = matching_patterns + matching_regexes
   
-  if has_exact and matching_patterns:
-    msg = f"'{block}' rules are ambiguous: matches exact rule and pattern(s): {matching_patterns}"
+  if has_exact and matching_rules:
+    msg = f"'{block}' rules are ambiguous: matches exact rule and pattern(s): {matching_rules}"
     if state.run.allow_overlaps:
       print(f"WARN: {msg} (using exact)")
     else:
       raise RuntimeError(f"{msg}. Use --allow-overlaps to proceed anyway.")
 
-  if len(matching_patterns) > 1:
-    msg = f"{block} matches multiple patterns: {matching_patterns}"
+  if len(matching_rules) > 1:
+    msg = f"{block} matches multiple patterns: {matching_rules}"
     if state.run.allow_overlaps:
       print(f"WARN: {msg} (using first)")
     else:
       raise RuntimeError(f"{msg}. Use --allow-overlaps to proceed anyway.")
   
-  # Prioritize exact over pattern
+  # Prioritize exact > pattern > regex
   if has_exact:
     return rules.replace_block[block]
   elif pattern_result:
     return pattern_result
+  elif regex_result:
+    return regex_result
   return None
 
 def replace_nbt_strings(

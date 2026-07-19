@@ -6,6 +6,7 @@ from main import BZRules, BZRun, BZState
 def make_state(
     replace_block: dict[str, str] | None = None,
     replace_block_pattern: dict[str, str] | None = None,
+    replace_block_regex: dict[str, str] | None = None,
     replace_string: dict[str, str] | None = None,
     allow_overlaps: bool = False,
 ) -> BZState:
@@ -13,6 +14,7 @@ def make_state(
         rules=BZRules(
             replace_block=replace_block or {},
             replace_block_pattern=replace_block_pattern or {},
+            replace_block_regex=replace_block_regex or {},
             replace_string=replace_string or {},
         ),
         run=BZRun(
