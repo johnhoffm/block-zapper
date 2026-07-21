@@ -9,6 +9,7 @@ def make_state(
     replace_block_regex: dict[str, str] | None = None,
     replace_string: dict[str, str] | None = None,
     allow_overlaps: bool = False,
+    allowlist: frozenset[str] | None = None,
 ) -> BZState:
     return BZState(
         rules=BZRules(
@@ -22,6 +23,7 @@ def make_state(
             input_root_dir=Path("."),
             dry_run=False,
             allow_overlaps=allow_overlaps,
+            allowlist=allowlist,
         ),
         tree=None,
     )

@@ -11,6 +11,7 @@ from treelib import Tree
 
 BZ_CONFIG_SUFFIX = ".bz.toml"
 TREE_SUMMARY_LINE_TYPE = "ascii-ex"
+BLOCK_IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9_.-]+:[a-z0-9_./-]+$")
 
 @dataclass
 class BZArgs:
@@ -19,6 +20,7 @@ class BZArgs:
   verbose: bool = False
   dry_run: bool = False
   allow_overlaps: bool = False
+  allowlist: Path | None = None
   tree_output: Path | None = None
 
 @dataclass
@@ -43,6 +45,7 @@ class BZRun:
   input_root_dir: Path
   dry_run: bool = False
   allow_overlaps: bool = False
+  allowlist: frozenset[str] | None = None
 
 class BZReplacementKind(StrEnum):
   BLOCK = "block"
@@ -80,6 +83,7 @@ def main():
   parser.add_argument('-v', '--verbose', action='store_true', help='enable verbose output')
   parser.add_argument('-n', '--dry-run', action='store_true', help='dry run, do not write or modify files')
   parser.add_argument('--allow-overlaps', action='store_true', help='allow blocks matching multiple rules (warns instead of failing)')
+  parser.add_argument('--allowlist', type=Path, metavar='FILE', help='only replace blocks listed in FILE (one namespace:block per line)')
   parser.add_argument('--tree-output', type=Path, help='output a tree summary to the specified file')
 
   args = parser.parse_args()
@@ -90,12 +94,15 @@ def main():
     verbose=args.verbose,
     dry_run=args.dry_run,
     allow_overlaps=args.allow_overlaps,
+    allowlist=args.allowlist,
     tree_output=args.tree_output
   )
 
   start(bz_args)
 
 def start(bz_args: BZArgs):
+  allowlist = load_allowlist(bz_args.allowlist) if bz_args.allowlist else None
+
   # Check if output directory exists and is non-empty
   if bz_args.output_dir.exists():
     if any(bz_args.output_dir.iterdir()):
@@ -107,7 +114,8 @@ def start(bz_args: BZArgs):
     output_root_dir=bz_args.output_dir,
     input_root_dir=bz_args.target_dir,
     dry_run=bz_args.dry_run,
-    allow_overlaps=bz_args.allow_overlaps)
+    allow_overlaps=bz_args.allow_overlaps,
+    allowlist=allowlist)
 
   initial_state = BZState(
     rules=BZRules(),
@@ -120,6 +128,26 @@ def start(bz_args: BZArgs):
   if bz_args.tree_output and root_tree:
     with open(bz_args.tree_output, "w") as f:
       f.write(render_tree_summary(root_tree))
+
+def load_allowlist(path: Path) -> frozenset[str]:
+  """Load a global block allowlist with one namespace:block identifier per line."""
+  try:
+    lines = path.read_text(encoding="utf-8").splitlines()
+  except OSError as error:
+    raise RuntimeError(f"Failed to read allowlist file {path}") from error
+
+  allowlist = set()
+  for line_number, line in enumerate(lines, start=1):
+    block = line.strip()
+    if not block:
+      continue
+    if not BLOCK_IDENTIFIER_PATTERN.fullmatch(block):
+      raise RuntimeError(
+        f"Invalid block identifier in allowlist {path} on line {line_number}: {block!r}"
+      )
+    allowlist.add(block)
+
+  return frozenset(allowlist)
 
 def load_config(path: Path) -> BZConfig | None:
   # Find *.bz.toml files in the current directory
@@ -298,12 +326,18 @@ def replace_block_str(block: str, state: BZState) -> str | None:
   
   # Prioritize exact > pattern > regex
   if has_exact:
-    return rules.replace_block[block]
+    replacement = rules.replace_block[block]
   elif pattern_result:
-    return pattern_result
+    replacement = pattern_result
   elif regex_result:
-    return regex_result
-  return None
+    replacement = regex_result
+  else:
+    return None
+
+  if state.run.allowlist is not None and block not in state.run.allowlist:
+    raise RuntimeError(f"'{block}' is not in the global allowlist and cannot be replaced.")
+
+  return replacement
 
 def replace_nbt_strings(
   node,

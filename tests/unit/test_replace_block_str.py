@@ -39,6 +39,21 @@ class TestReplaceBlockStr:
     result = replace_block_str("minecraft:dirt", state)
     assert result is None
 
+  def test_allowlist_permits_replacement(self):
+    state = make_state(
+      replace_block={"minecraft:stone": "minecraft:deepslate"},
+      allowlist=frozenset({"minecraft:stone"}),
+    )
+    assert replace_block_str("minecraft:stone", state) == "minecraft:deepslate"
+
+  def test_allowlist_rejects_replacement(self):
+    state = make_state(
+      replace_block={"minecraft:stone": "minecraft:deepslate"},
+      allowlist=frozenset({"minecraft:dirt"}),
+    )
+    with pytest.raises(RuntimeError):
+      replace_block_str("minecraft:stone", state)
+
   def test_pattern_overlap_raises_error(self):
     state = make_state(
       replace_block_pattern={
