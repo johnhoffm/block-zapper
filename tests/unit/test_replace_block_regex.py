@@ -1,6 +1,6 @@
 import pytest
 
-from main import load_config, match_block_regex, replace_block_str
+from main import BZAllowlist, load_config, match_block_regex, replace_block_str
 from tests.unit.helpers import make_state
 
 
@@ -76,6 +76,27 @@ class TestReplaceBlockRegex:
     )
 
     assert replace_block_str("minecraft:oak_planks", state) == "minecraft:dark_oak_planks"
+
+  def test_regex_rule_replaces_block_when_destination_is_allowlisted(self):
+    state = make_state(
+      replace_block_regex={
+        "minecraft:(?P<wood>oak)_planks": "minecraft:dark_{wood}_planks",
+      },
+      allowlist=BZAllowlist(blocks={"minecraft:dark_oak_planks"}, items=set()),
+    )
+
+    assert replace_block_str("minecraft:oak_planks", state) == "minecraft:dark_oak_planks"
+
+  def test_regex_rule_rejects_block_when_destination_is_not_allowlisted(self):
+    state = make_state(
+      replace_block_regex={
+        "minecraft:(?P<wood>oak)_planks": "minecraft:dark_{wood}_planks",
+      },
+      allowlist=BZAllowlist(blocks={"minecraft:oak_planks"}, items=set()),
+    )
+
+    with pytest.raises(RuntimeError):
+      replace_block_str("minecraft:oak_planks", state)
 
   def test_regex_and_template_pattern_overlap_raises_error(self):
     state = make_state(

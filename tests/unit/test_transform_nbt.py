@@ -1,6 +1,7 @@
 import nbtlib
+import pytest
 
-from main import BZReplacement, BZReplacementKind, replace_nbt_strings, transform_nbt
+from main import BZAllowlist, BZReplacement, BZReplacementKind, replace_nbt_strings, transform_nbt
 from tests.unit.helpers import make_state
 
 
@@ -43,6 +44,21 @@ class TestReplaceNbtStrings:
     assert str(payload["Items"][0]["id"]) == "minecraft:poppy"
     assert str(payload["Items"][1]["id"]) == "minecraft:bone"
     assert str(payload["Item"]["id"]) == "minecraft:poppy"
+
+  def test_rejects_item_not_in_allowlist(self):
+    payload = nbtlib.Compound({
+      "id": nbtlib.tag.String("minecraft:allium"),
+    })
+
+    with pytest.raises(RuntimeError):
+      replace_nbt_strings(
+        payload,
+        {"minecraft:allium": "minecraft:poppy"},
+        "blocks[0].nbt",
+        BZAllowlist(blocks=set(), items={"minecraft:allium"}),
+      )
+
+    assert str(payload["id"]) == "minecraft:allium"
 
 
 class TestTransformNbt:

@@ -11,7 +11,13 @@ from treelib import Tree
 
 BZ_CONFIG_SUFFIX = ".bz.toml"
 TREE_SUMMARY_LINE_TYPE = "ascii-ex"
-BLOCK_IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9_.-]+:[a-z0-9_./-]+$")
+RESOURCE_IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9_.-]+:[a-z0-9_./-]+$")
+RESOURCE_PATH_PATTERN = re.compile(r"^[a-z0-9_./-]+$")
+PROBEJS_REGISTRY_TYPE_PATTERN = re.compile(
+  r"\b(?:export\s+)?type\s+(?P<registry>Block|Item)\s*=\s*(?P<definition>.*?);",
+  re.DOTALL,
+)
+PROBEJS_STRING_LITERAL_PATTERN = re.compile(r'"(?P<resource>[^"]+)"')
 
 @dataclass
 class BZArgs:
@@ -39,13 +45,18 @@ class BZRules:
   replace_block_regex: dict[str, str] = field(default_factory=dict)
   replace_string: dict[str, str] = field(default_factory=dict)
 
+@dataclass
+class BZAllowlist:
+  blocks: set[str]
+  items: set[str]
+
 @dataclass(frozen=True)
 class BZRun:
   output_root_dir: Path
   input_root_dir: Path
   dry_run: bool = False
   allow_overlaps: bool = False
-  allowlist: frozenset[str] | None = None
+  allowlist: BZAllowlist | None = None
 
 class BZReplacementKind(StrEnum):
   BLOCK = "block"
@@ -83,7 +94,7 @@ def main():
   parser.add_argument('-v', '--verbose', action='store_true', help='enable verbose output')
   parser.add_argument('-n', '--dry-run', action='store_true', help='dry run, do not write or modify files')
   parser.add_argument('--allow-overlaps', action='store_true', help='allow blocks matching multiple rules (warns instead of failing)')
-  parser.add_argument('--allowlist', type=Path, metavar='FILE', help='only replace blocks listed in FILE (one namespace:block per line)')
+  parser.add_argument('--allowlist', type=Path, metavar='FILE', help='only replace listed blocks and items in FILE (one mod:id per line or a path to ProbeJS registry type file)')
   parser.add_argument('--tree-output', type=Path, help='output a tree summary to the specified file')
 
   args = parser.parse_args()
@@ -129,25 +140,60 @@ def start(bz_args: BZArgs):
     with open(bz_args.tree_output, "w") as f:
       f.write(render_tree_summary(root_tree))
 
-def load_allowlist(path: Path) -> frozenset[str]:
-  """Load a global block allowlist with one namespace:block identifier per line."""
+def load_allowlist(path: Path) -> BZAllowlist:
+  """Load block and item allowlists from plain text or a ProbeJS registry type file."""
   try:
-    lines = path.read_text(encoding="utf-8").splitlines()
+    content = path.read_text(encoding="utf-8")  
   except OSError as error:
     raise RuntimeError(f"Failed to read allowlist file {path}") from error
 
-  allowlist = set()
-  for line_number, line in enumerate(lines, start=1):
-    block = line.strip()
-    if not block:
-      continue
-    if not BLOCK_IDENTIFIER_PATTERN.fullmatch(block):
-      raise RuntimeError(
-        f"Invalid block identifier in allowlist {path} on line {line_number}: {block!r}"
-      )
-    allowlist.add(block)
+  probejs_registry_types = {
+    match.group("registry"): load_probejs_allowlist(
+      path,
+      match.group("registry"),
+      match.group("definition"),
+    )
+    for match in PROBEJS_REGISTRY_TYPE_PATTERN.finditer(content)
+  }
+  if probejs_registry_types:
+    return BZAllowlist(
+      blocks=probejs_registry_types.get("Block", set()),
+      items=probejs_registry_types.get("Item", set()),
+    )
 
-  return frozenset(allowlist)
+  allowlist = set()
+  for line_number, line in enumerate(content.splitlines(), start=1):
+    resource = line.strip()
+    if not resource:
+      continue
+    validate_resource_identifier(resource, f"allowlist {path} on line {line_number}")
+    allowlist.add(resource)
+
+  resources = set(allowlist)
+  return BZAllowlist(blocks=resources, items=resources)
+
+def load_probejs_allowlist(
+  path: Path,
+  registry: str,
+  type_definition: str,
+) -> set[str]:
+  """Extract resource IDs from a ProbeJS generated registry type union."""
+  allowlist = {
+    normalize_probejs_resource(resource, f"ProbeJS {registry} type in {path}")
+    for resource in PROBEJS_STRING_LITERAL_PATTERN.findall(type_definition)
+  }
+  return allowlist
+
+def normalize_probejs_resource(resource: str, location: str) -> str:
+  if RESOURCE_IDENTIFIER_PATTERN.fullmatch(resource):
+    return resource
+  if RESOURCE_PATH_PATTERN.fullmatch(resource):
+    return f"minecraft:{resource}"
+  raise RuntimeError(f"Invalid resource identifier in {location}: {resource!r}")
+
+def validate_resource_identifier(resource: str, location: str):
+  if not RESOURCE_IDENTIFIER_PATTERN.fullmatch(resource):
+    raise RuntimeError(f"Invalid resource identifier in {location}: {resource!r}")
 
 def load_config(path: Path) -> BZConfig | None:
   # Find *.bz.toml files in the current directory
@@ -334,8 +380,10 @@ def replace_block_str(block: str, state: BZState) -> str | None:
   else:
     return None
 
-  if state.run.allowlist is not None and block not in state.run.allowlist:
-    raise RuntimeError(f"'{block}' is not in the global allowlist and cannot be replaced.")
+  if state.run.allowlist is not None and replacement not in state.run.allowlist.blocks:
+    raise RuntimeError(
+      f"Replacement block '{replacement}' is not in the global block allowlist."
+    )
 
   return replacement
 
@@ -343,6 +391,7 @@ def replace_nbt_strings(
   node,
   replacements: dict[str, str],
   location: str,
+  allowlist: BZAllowlist | None = None,
 ) -> list[BZReplacement]:
   """
   Recursively replace exact NBT string values.
@@ -357,6 +406,10 @@ def replace_nbt_strings(
         old_value = str(value)
         if old_value in replacements:
           new_value = replacements[old_value]
+          if allowlist is not None and new_value not in allowlist.items:
+            raise RuntimeError(
+              f"Replacement item '{new_value}' is not in the global item allowlist."
+            )
           node[key] = nbtlib.tag.String(new_value)
           replacements_made.append(BZReplacement(
             kind=BZReplacementKind.STRING,
@@ -365,7 +418,7 @@ def replace_nbt_strings(
             location=child_location,
           ))
       else:
-        replacements_made.extend(replace_nbt_strings(value, replacements, child_location))
+        replacements_made.extend(replace_nbt_strings(value, replacements, child_location, allowlist))
   elif isinstance(node, list):
     for index, value in enumerate(node):
       child_location = f"{location}[{index}]"
@@ -373,6 +426,10 @@ def replace_nbt_strings(
         old_value = str(value)
         if old_value in replacements:
           new_value = replacements[old_value]
+          if allowlist is not None and new_value not in allowlist.items:
+            raise RuntimeError(
+              f"Replacement item '{new_value}' is not in the global item allowlist."
+            )
           node[index] = nbtlib.tag.String(new_value)
           replacements_made.append(BZReplacement(
             kind=BZReplacementKind.STRING,
@@ -381,11 +438,15 @@ def replace_nbt_strings(
             location=child_location,
           ))
       else:
-        replacements_made.extend(replace_nbt_strings(value, replacements, child_location))
+        replacements_made.extend(replace_nbt_strings(value, replacements, child_location, allowlist))
 
   return replacements_made
 
-def replace_payload_strings(root, replacements: dict[str, str]) -> list[BZReplacement]:
+def replace_payload_strings(
+  root,
+  replacements: dict[str, str],
+  allowlist: BZAllowlist | None,
+) -> list[BZReplacement]:
   """
   Replace strings inside block/entity NBT payloads without touching palette block states.
   """
@@ -394,13 +455,13 @@ def replace_payload_strings(root, replacements: dict[str, str]) -> list[BZReplac
   for index, block in enumerate(root.get("blocks", [])):
     if "nbt" in block:
       replacements_made.extend(
-        replace_nbt_strings(block["nbt"], replacements, f"blocks[{index}].nbt")
+        replace_nbt_strings(block["nbt"], replacements, f"blocks[{index}].nbt", allowlist)
       )
 
   for index, entity in enumerate(root.get("entities", [])):
     if "nbt" in entity:
       replacements_made.extend(
-        replace_nbt_strings(entity["nbt"], replacements, f"entities[{index}].nbt")
+        replace_nbt_strings(entity["nbt"], replacements, f"entities[{index}].nbt", allowlist)
       )
 
   return replacements_made
@@ -440,7 +501,9 @@ def transform_nbt(root, state: BZState) -> list[BZReplacement]:
         ))
 
   if state.rules.replace_string:
-    replacements.extend(replace_payload_strings(root, state.rules.replace_string))
+    replacements.extend(
+      replace_payload_strings(root, state.rules.replace_string, state.run.allowlist)
+    )
   
   return replacements
 

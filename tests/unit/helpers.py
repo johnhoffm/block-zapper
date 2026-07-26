@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from main import BZRules, BZRun, BZState
+from main import BZAllowlist, BZRules, BZRun, BZState
 
 
 def make_state(
@@ -9,7 +9,7 @@ def make_state(
     replace_block_regex: dict[str, str] | None = None,
     replace_string: dict[str, str] | None = None,
     allow_overlaps: bool = False,
-    allowlist: frozenset[str] | None = None,
+    allowlist: BZAllowlist | None = None,
 ) -> BZState:
     return BZState(
         rules=BZRules(

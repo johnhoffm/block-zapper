@@ -1,6 +1,6 @@
 import pytest
 
-from main import replace_block_str
+from main import BZAllowlist, replace_block_str
 from tests.unit.helpers import make_state
 
 
@@ -42,14 +42,14 @@ class TestReplaceBlockStr:
   def test_allowlist_permits_replacement(self):
     state = make_state(
       replace_block={"minecraft:stone": "minecraft:deepslate"},
-      allowlist=frozenset({"minecraft:stone"}),
+      allowlist=BZAllowlist({"minecraft:deepslate"}, set()),
     )
     assert replace_block_str("minecraft:stone", state) == "minecraft:deepslate"
 
   def test_allowlist_rejects_replacement(self):
     state = make_state(
       replace_block={"minecraft:stone": "minecraft:deepslate"},
-      allowlist=frozenset({"minecraft:dirt"}),
+      allowlist=BZAllowlist({"minecraft:stone"}, set()),
     )
     with pytest.raises(RuntimeError):
       replace_block_str("minecraft:stone", state)
