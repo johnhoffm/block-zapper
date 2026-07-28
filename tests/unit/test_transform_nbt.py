@@ -60,6 +60,38 @@ class TestReplaceNbtStrings:
 
     assert str(payload["id"]) == "minecraft:allium"
 
+  def test_replaces_string_with_template_pattern(self):
+    payload = nbtlib.Compound({
+      "id": nbtlib.tag.String("minecraft:oak_sign"),
+    })
+
+    replacements = replace_nbt_strings(
+      payload,
+      {},
+      "blocks[0].nbt",
+      patterns={"minecraft:{wood}_sign": "minecraft:dark_{wood}_sign"},
+    )
+
+    assert str(payload["id"]) == "minecraft:dark_oak_sign"
+    assert replacements[0].old_value == "minecraft:oak_sign"
+    assert replacements[0].new_value == "minecraft:dark_oak_sign"
+
+  def test_replaces_string_with_regex(self):
+    payload = nbtlib.Compound({
+      "id": nbtlib.tag.String("minecraft:oak_sign"),
+    })
+
+    replacements = replace_nbt_strings(
+      payload,
+      {},
+      "blocks[0].nbt",
+      regexes={"minecraft:(?P<wood>oak)_sign": "minecraft:dark_{wood}_sign"},
+    )
+
+    assert str(payload["id"]) == "minecraft:dark_oak_sign"
+    assert replacements[0].old_value == "minecraft:oak_sign"
+    assert replacements[0].new_value == "minecraft:dark_oak_sign"
+
 
 class TestTransformNbt:
   def test_block_replacement_preserves_palette_properties(self):
