@@ -110,7 +110,7 @@ class TestReplaceBlockRegex:
   def test_regex_rules_are_loaded_from_config(self, tmp_path):
     (tmp_path / ".bz.toml").write_text(
       """
-      [replace-block-regex]
+      [block.regex]
       "minecraft:(?P<wood>oak)_planks" = "minecraft:dark_{wood}_planks"
       """,
       encoding="utf-8",
@@ -126,7 +126,7 @@ class TestReplaceBlockRegex:
   def test_invalid_regex_in_config_raises_clear_error(self, tmp_path):
     (tmp_path / ".bz.toml").write_text(
       """
-      [replace-block-regex]
+      [block.regex]
       "minecraft:(?P<wood>oak" = "minecraft:dark_{wood}"
       """,
       encoding="utf-8",

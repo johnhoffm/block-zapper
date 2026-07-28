@@ -216,20 +216,22 @@ def load_config(path: Path) -> BZConfig | None:
   except Exception as e:
     raise RuntimeError(f"Failed to parse config file {config}") from e
 
-  replace_block_regex = data.get("replace-block-regex", {})
+  block = data.get("block", {})
+  string = data.get("string", {})
+  replace_block_regex = block.get("regex", {})
   for regex in replace_block_regex:
     try:
       re.compile(regex)
     except re.error as error:
-      raise RuntimeError(f"Invalid replace-block-regex '{regex}' in {config}: {error}") from error
+      raise RuntimeError(f"Invalid block.regex '{regex}' in {config}: {error}") from error
   
   return BZConfig(
           recursive=data.get("recursive", True),
           inherit=data.get("inherit", True),
-          replace_block=data.get("replace-block", {}),
-          replace_block_pattern=data.get("replace-block-pattern", {}),
+          replace_block=block.get("simple", {}),
+          replace_block_pattern=block.get("pattern", {}),
           replace_block_regex=replace_block_regex,
-          replace_string=data.get("replace-string", {}),
+          replace_string=string.get("simple", {}),
       )
 
 def merge_state(base: BZState, config: BZConfig, subtree: str | None = None) -> BZState:

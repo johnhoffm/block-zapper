@@ -24,7 +24,7 @@ def test_replace_plains_village_blocks_with_probejs_allowlist(
     write_config(
         input_dir,
         """
-    [replace-block]
+    [block.simple]
     "minecraft:oak_planks" = "minecraft:dark_oak_planks"
     """,
     )
@@ -73,7 +73,7 @@ def test_replace_woodland_mansion_items_with_probejs_allowlist(
     write_config(
         input_dir,
         """
-    [replace-string]
+    [string.simple]
     "minecraft:allium" = "minecraft:poppy"
     """,
     )

@@ -36,7 +36,7 @@ def test_replace_plains_village_replace_oak_dark_oak(
     write_config(
         input_dir,
         """
-    [replace-block-pattern]
+    [block.pattern]
     "minecraft:oak{whatever}" = "minecraft:dark_oak{whatever}"
     """,
     )
@@ -80,10 +80,10 @@ def test_replace_plains_village_houses_stone_and_oak(
     write_config(
         input_dir,
         """
-    [replace-block]
+    [block.simple]
     "minecraft:cobblestone" = "minecraft:deepslate"
 
-    [replace-block-pattern]
+    [block.pattern]
     "minecraft:oak_{part}" = "minecraft:dark_oak_{part}"
     """,
     )
@@ -128,7 +128,7 @@ def test_plains_village_hay_to_kelp_dry_run(
     write_config(
         input_dir,
         """
-    [replace-block]
+    [block.simple]
     "minecraft:hay_block" = "minecraft:dried_kelp_block"
     """,
     )
@@ -175,7 +175,7 @@ def test_taiga_village_cobblestone_inherit_false(
     write_config(
         input_dir / "village/taiga",
         """
-    [replace-block]
+    [block.simple]
     "minecraft:cobblestone" = "minecraft:deepslate"
     """,
     )
@@ -235,7 +235,7 @@ def test_trail_ruins_replace_terracotta_pattern_to_empty(
     write_config(
         input_dir,
         """
-    [replace-block-pattern]
+    [block.pattern]
     "minecraft:{color}_terracotta" = "minecraft:diamond_block"
     """,
     )
@@ -298,7 +298,7 @@ def test_shipwreck_replace_birch_wood(
     write_config(
         input_dir,
         """
-    [replace-block]
+    [block.simple]
     "minecraft:birch_planks" = "minecraft:diamond_block"
     """,
     )
@@ -338,7 +338,7 @@ def test_woodland_mansion_replace_potted_plants(
     write_config(
         input_dir,
         """
-    [replace-block-pattern]
+    [block.pattern]
     "minecraft:potted_{plant}" = "minecraft:potted_pale_oak_sapling"
     """,
     )
@@ -384,7 +384,7 @@ def test_woodland_mansion_allium_chest(
     write_config(
         input_dir,
         """
-    [replace-string]
+    [string.simple]
     "minecraft:allium" = "minecraft:poppy"
     """,
     )
@@ -422,10 +422,10 @@ def test_plains_village_houses_errors_no_overlap(
     write_config(
         input_dir,
         """
-    [replace-block]
+    [block.simple]
     "minecraft:oak_trapdoor" = "minecraft:birch_trapdoor"
 
-    [replace-block-pattern]
+    [block.pattern]
     "minecraft:oak_{part}" = "minecraft:dark_oak_{part}"
     """,
     )
