@@ -16,7 +16,7 @@ class TestLoadConfig:
     config = load_config(tmp_path)
 
     assert config is not None
-    assert config.replace_string == {
+    assert config.string.simple == {
       "minecraft:allium": "minecraft:poppy",
     }
 
@@ -32,7 +32,7 @@ class TestLoadConfig:
     config = load_config(tmp_path)
 
     assert config is not None
-    assert config.replace_block == {
+    assert config.block.simple == {
       "minecraft:oak_planks": "minecraft:spruce_planks",
     }
 
@@ -51,10 +51,10 @@ class TestLoadConfig:
     config = load_config(tmp_path)
 
     assert config is not None
-    assert config.replace_string_pattern == {
+    assert config.string.pattern == {
       "minecraft:{flower}": "minecraft:potted_{flower}",
     }
-    assert config.replace_string_regex == {
+    assert config.string.regex == {
       "minecraft:(?P<wood>oak)_sign": "minecraft:dark_{wood}_sign",
     }
 

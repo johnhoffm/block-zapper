@@ -119,7 +119,7 @@ class TestReplaceBlockRegex:
     config = load_config(tmp_path)
 
     assert config is not None
-    assert config.replace_block_regex == {
+    assert config.block.regex == {
       "minecraft:(?P<wood>oak)_planks": "minecraft:dark_{wood}_planks",
     }
 

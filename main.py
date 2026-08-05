@@ -30,24 +30,33 @@ class BZArgs:
   tree_output: Path | None = None
 
 @dataclass
+class BZReplacementRules:
+  """Rules for one replacement domain, applied as simple, pattern, then regex."""
+  simple: dict[str, str] = field(default_factory=dict)
+  pattern: dict[str, str] = field(default_factory=dict)
+  regex: dict[str, str] = field(default_factory=dict)
+
+  def merged_with(self, overriding_rules: "BZReplacementRules") -> "BZReplacementRules":
+    return BZReplacementRules(
+      simple=self.simple | overriding_rules.simple,
+      pattern=self.pattern | overriding_rules.pattern,
+      regex=self.regex | overriding_rules.regex,
+    )
+
+  def is_empty(self) -> bool:
+    return not (self.simple or self.pattern or self.regex)
+
+@dataclass
 class BZConfig:
   recursive: bool = True
   inherit: bool = True
-  replace_block: dict[str, str] = field(default_factory=dict)
-  replace_block_pattern: dict[str, str] = field(default_factory=dict)
-  replace_block_regex: dict[str, str] = field(default_factory=dict)
-  replace_string: dict[str, str] = field(default_factory=dict)
-  replace_string_pattern: dict[str, str] = field(default_factory=dict)
-  replace_string_regex: dict[str, str] = field(default_factory=dict)
+  block: BZReplacementRules = field(default_factory=BZReplacementRules)
+  string: BZReplacementRules = field(default_factory=BZReplacementRules)
 
 @dataclass
 class BZRules:
-  replace_block: dict[str, str] = field(default_factory=dict)
-  replace_block_pattern: dict[str, str] = field(default_factory=dict)
-  replace_block_regex: dict[str, str] = field(default_factory=dict)
-  replace_string: dict[str, str] = field(default_factory=dict)
-  replace_string_pattern: dict[str, str] = field(default_factory=dict)
-  replace_string_regex: dict[str, str] = field(default_factory=dict)
+  block: BZReplacementRules = field(default_factory=BZReplacementRules)
+  string: BZReplacementRules = field(default_factory=BZReplacementRules)
 
 @dataclass
 class BZAllowlist:
@@ -199,6 +208,27 @@ def validate_resource_identifier(resource: str, location: str):
   if not RESOURCE_IDENTIFIER_PATTERN.fullmatch(resource):
     raise RuntimeError(f"Invalid resource identifier in {location}: {resource!r}")
 
+def load_replacement_rules(
+  config_path: Path,
+  rule_kind: str,
+  data: dict,
+) -> BZReplacementRules:
+  rule_data = data.get(rule_kind, {})
+  regexes = rule_data.get("regex", {})
+  for regex in regexes:
+    try:
+      re.compile(regex)
+    except re.error as error:
+      raise RuntimeError(
+        f"Invalid {rule_kind}.regex '{regex}' in {config_path}: {error}"
+      ) from error
+
+  return BZReplacementRules(
+    simple=rule_data.get("simple", {}),
+    pattern=rule_data.get("pattern", {}),
+    regex=regexes,
+  )
+
 def load_config(path: Path) -> BZConfig | None:
   # Find *.bz.toml files in the current directory
   config_paths = sorted(
@@ -220,39 +250,20 @@ def load_config(path: Path) -> BZConfig | None:
   except Exception as e:
     raise RuntimeError(f"Failed to parse config file {config}") from e
 
-  block = data.get("block", {})
-  string = data.get("string", {})
-  replace_block_regex = block.get("regex", {})
-  replace_string_regex = string.get("regex", {})
-  for rule_kind, regexes in (("block", replace_block_regex), ("string", replace_string_regex)):
-    for regex in regexes:
-      try:
-        re.compile(regex)
-      except re.error as error:
-        raise RuntimeError(f"Invalid {rule_kind}.regex '{regex}' in {config}: {error}") from error
-  
   return BZConfig(
-          recursive=data.get("recursive", True),
-          inherit=data.get("inherit", True),
-          replace_block=block.get("simple", {}),
-          replace_block_pattern=block.get("pattern", {}),
-          replace_block_regex=replace_block_regex,
-          replace_string=string.get("simple", {}),
-          replace_string_pattern=string.get("pattern", {}),
-          replace_string_regex=replace_string_regex,
-      )
+    recursive=data.get("recursive", True),
+    inherit=data.get("inherit", True),
+    block=load_replacement_rules(config, "block", data),
+    string=load_replacement_rules(config, "string", data),
+  )
 
 def merge_state(base: BZState, config: BZConfig, subtree: str | None = None) -> BZState:
   base_rules = base.rules if config.inherit else BZRules()
 
   return BZState(
     rules=BZRules(
-      replace_block=base_rules.replace_block | config.replace_block,
-      replace_block_pattern=base_rules.replace_block_pattern | config.replace_block_pattern,
-      replace_block_regex=base_rules.replace_block_regex | config.replace_block_regex,
-      replace_string=base_rules.replace_string | config.replace_string,
-      replace_string_pattern=base_rules.replace_string_pattern | config.replace_string_pattern,
-      replace_string_regex=base_rules.replace_string_regex | config.replace_string_regex,
+      block=base_rules.block.merged_with(config.block),
+      string=base_rules.string.merged_with(config.string),
     ),
     run=base.run,
     tree=base.tree,
@@ -365,15 +376,14 @@ def match_block_regex(block: str, regexes: dict) -> tuple[str | None, list[str]]
 
 def resolve_replacement(
   value: str,
-  simple: dict[str, str],
-  patterns: dict[str, str],
-  regexes: dict[str, str],
+  rules: BZReplacementRules,
   rule_kind: str,
   allow_overlaps: bool,
 ) -> str | None:
-  has_exact = value in simple
-  pattern_result, matching_patterns = match_pattern(value, patterns) if patterns else (None, [])
-  regex_result, matching_regexes = match_regex(value, regexes, rule_kind) if regexes else (None, [])
+  """Resolve one value according to the replacement rule precedence."""
+  has_exact = value in rules.simple
+  pattern_result, matching_patterns = match_pattern(value, rules.pattern) if rules.pattern else (None, [])
+  regex_result, matching_regexes = match_regex(value, rules.regex, rule_kind) if rules.regex else (None, [])
   matching_rules = matching_patterns + matching_regexes
 
   if has_exact and matching_rules:
@@ -391,22 +401,20 @@ def resolve_replacement(
       raise RuntimeError(f"{msg}. Use --allow-overlaps to proceed anyway.")
 
   if has_exact:
-    return simple[value]
+    return rules.simple[value]
   if pattern_result:
     return pattern_result
   return regex_result
 
 def replace_block_str(block: str, state: BZState) -> str | None:
   """
-  Get a block replacement, checking simple matches first then patterns.
+  Get a block replacement, checking simple, pattern, then regex rules.
   Raises RuntimeError on overlapping matches unless allow_overlaps is set.
   """
-  rules = state.rules
+  rules = state.rules.block
   replacement = resolve_replacement(
     block,
-    rules.replace_block,
-    rules.replace_block_pattern,
-    rules.replace_block_regex,
+    rules,
     "block",
     state.run.allow_overlaps,
   )
@@ -422,11 +430,9 @@ def replace_block_str(block: str, state: BZState) -> str | None:
 
 def replace_nbt_strings(
   node,
-  replacements: dict[str, str],
+  rules: BZReplacementRules,
   location: str,
   allowlist: BZAllowlist | None = None,
-  patterns: dict[str, str] | None = None,
-  regexes: dict[str, str] | None = None,
   allow_overlaps: bool = False,
 ) -> list[BZReplacement]:
   """
@@ -434,8 +440,6 @@ def replace_nbt_strings(
   Returns string replacements made.
   """
   replacements_made = []
-  patterns = patterns or {}
-  regexes = regexes or {}
 
   if isinstance(node, dict):
     for key, value in node.items():
@@ -443,7 +447,7 @@ def replace_nbt_strings(
       if isinstance(value, nbtlib.tag.String):
         old_value = str(value)
         new_value = resolve_replacement(
-          old_value, replacements, patterns, regexes, "string", allow_overlaps
+          old_value, rules, "string", allow_overlaps
         )
         if new_value is not None:
           if allowlist is not None and new_value not in allowlist.items:
@@ -459,7 +463,7 @@ def replace_nbt_strings(
           ))
       else:
         replacements_made.extend(replace_nbt_strings(
-          value, replacements, child_location, allowlist, patterns, regexes, allow_overlaps
+          value, rules, child_location, allowlist, allow_overlaps
         ))
   elif isinstance(node, list):
     for index, value in enumerate(node):
@@ -467,7 +471,7 @@ def replace_nbt_strings(
       if isinstance(value, nbtlib.tag.String):
         old_value = str(value)
         new_value = resolve_replacement(
-          old_value, replacements, patterns, regexes, "string", allow_overlaps
+          old_value, rules, "string", allow_overlaps
         )
         if new_value is not None:
           if allowlist is not None and new_value not in allowlist.items:
@@ -483,16 +487,14 @@ def replace_nbt_strings(
           ))
       else:
         replacements_made.extend(replace_nbt_strings(
-          value, replacements, child_location, allowlist, patterns, regexes, allow_overlaps
+          value, rules, child_location, allowlist, allow_overlaps
         ))
 
   return replacements_made
 
 def replace_payload_strings(
   root,
-  replacements: dict[str, str],
-  patterns: dict[str, str],
-  regexes: dict[str, str],
+  rules: BZReplacementRules,
   allowlist: BZAllowlist | None,
   allow_overlaps: bool,
 ) -> list[BZReplacement]:
@@ -505,8 +507,7 @@ def replace_payload_strings(
     if "nbt" in block:
       replacements_made.extend(
         replace_nbt_strings(
-          block["nbt"], replacements, f"blocks[{index}].nbt", allowlist,
-          patterns, regexes, allow_overlaps,
+          block["nbt"], rules, f"blocks[{index}].nbt", allowlist, allow_overlaps,
         )
       )
 
@@ -514,8 +515,7 @@ def replace_payload_strings(
     if "nbt" in entity:
       replacements_made.extend(
         replace_nbt_strings(
-          entity["nbt"], replacements, f"entities[{index}].nbt", allowlist,
-          patterns, regexes, allow_overlaps,
+          entity["nbt"], rules, f"entities[{index}].nbt", allowlist, allow_overlaps,
         )
       )
 
@@ -555,17 +555,11 @@ def transform_nbt(root, state: BZState) -> list[BZReplacement]:
           location=f"{palette_location}[{index}].Name",
         ))
 
-  if (
-    state.rules.replace_string
-    or state.rules.replace_string_pattern
-    or state.rules.replace_string_regex
-  ):
+  if not state.rules.string.is_empty():
     replacements.extend(
       replace_payload_strings(
         root,
-        state.rules.replace_string,
-        state.rules.replace_string_pattern,
-        state.rules.replace_string_regex,
+        state.rules.string,
         state.run.allowlist,
         state.run.allow_overlaps,
       )

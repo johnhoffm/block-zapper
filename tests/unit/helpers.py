@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from main import BZAllowlist, BZRules, BZRun, BZState
+from main import BZAllowlist, BZReplacementRules, BZRules, BZRun, BZState
 
 
 def make_state(
@@ -15,12 +15,16 @@ def make_state(
 ) -> BZState:
     return BZState(
         rules=BZRules(
-            replace_block=replace_block or {},
-            replace_block_pattern=replace_block_pattern or {},
-            replace_block_regex=replace_block_regex or {},
-            replace_string=replace_string or {},
-            replace_string_pattern=replace_string_pattern or {},
-            replace_string_regex=replace_string_regex or {},
+            block=BZReplacementRules(
+                simple=replace_block or {},
+                pattern=replace_block_pattern or {},
+                regex=replace_block_regex or {},
+            ),
+            string=BZReplacementRules(
+                simple=replace_string or {},
+                pattern=replace_string_pattern or {},
+                regex=replace_string_regex or {},
+            ),
         ),
         run=BZRun(
             output_root_dir=Path("."),

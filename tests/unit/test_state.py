@@ -1,4 +1,4 @@
-from main import BZConfig, BZRules, merge_state, state_for_children
+from main import BZConfig, BZReplacementRules, BZRules, merge_state, state_for_children
 from tests.unit.helpers import make_state
 
 
@@ -14,24 +14,24 @@ class TestMergeState:
       },
     )
     config = BZConfig(
-      replace_block={
+      block=BZReplacementRules(simple={
         "minecraft:oak_planks": "minecraft:spruce_planks",
-      },
-      replace_string={
+      }),
+      string=BZReplacementRules(simple={
         "minecraft:cod": "minecraft:salmon",
-      },
+      }),
     )
 
     state = merge_state(base, config)
 
-    assert state.rules.replace_block == {
+    assert state.rules.block.simple == {
       "minecraft:stone": "minecraft:deepslate",
       "minecraft:oak_planks": "minecraft:spruce_planks",
     }
-    assert state.rules.replace_block_pattern == {
+    assert state.rules.block.pattern == {
       "minecraft:oak_{part}": "minecraft:dark_oak_{part}",
     }
-    assert state.rules.replace_string == {
+    assert state.rules.string.simple == {
       "minecraft:cod": "minecraft:salmon",
     }
 
@@ -47,18 +47,18 @@ class TestMergeState:
     )
     config = BZConfig(
       inherit=False,
-      replace_block={
+      block=BZReplacementRules(simple={
         "minecraft:oak_planks": "minecraft:spruce_planks",
-      },
+      }),
     )
 
     state = merge_state(base, config)
 
-    assert state.rules.replace_block == {
+    assert state.rules.block.simple == {
       "minecraft:oak_planks": "minecraft:spruce_planks",
     }
-    assert state.rules.replace_block_pattern == {}
-    assert state.rules.replace_string == {}
+    assert state.rules.block.pattern == {}
+    assert state.rules.string.simple == {}
 
 
 class TestStateForChildren:

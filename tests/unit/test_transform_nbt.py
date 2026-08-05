@@ -1,7 +1,7 @@
 import nbtlib
 import pytest
 
-from main import BZAllowlist, BZReplacement, BZReplacementKind, replace_nbt_strings, transform_nbt
+from main import BZAllowlist, BZReplacement, BZReplacementKind, BZReplacementRules, replace_nbt_strings, transform_nbt
 from tests.unit.helpers import make_state
 
 
@@ -23,7 +23,7 @@ class TestReplaceNbtStrings:
 
     replacements = replace_nbt_strings(
       payload,
-      {"minecraft:allium": "minecraft:poppy"},
+      BZReplacementRules(simple={"minecraft:allium": "minecraft:poppy"}),
       "blocks[0].nbt",
     )
 
@@ -53,7 +53,7 @@ class TestReplaceNbtStrings:
     with pytest.raises(RuntimeError):
       replace_nbt_strings(
         payload,
-        {"minecraft:allium": "minecraft:poppy"},
+        BZReplacementRules(simple={"minecraft:allium": "minecraft:poppy"}),
         "blocks[0].nbt",
         BZAllowlist(blocks=set(), items={"minecraft:allium"}),
       )
@@ -67,9 +67,10 @@ class TestReplaceNbtStrings:
 
     replacements = replace_nbt_strings(
       payload,
-      {},
+      BZReplacementRules(
+        pattern={"minecraft:{wood}_sign": "minecraft:dark_{wood}_sign"},
+      ),
       "blocks[0].nbt",
-      patterns={"minecraft:{wood}_sign": "minecraft:dark_{wood}_sign"},
     )
 
     assert str(payload["id"]) == "minecraft:dark_oak_sign"
@@ -83,9 +84,10 @@ class TestReplaceNbtStrings:
 
     replacements = replace_nbt_strings(
       payload,
-      {},
+      BZReplacementRules(
+        regex={"minecraft:(?P<wood>oak)_sign": "minecraft:dark_{wood}_sign"},
+      ),
       "blocks[0].nbt",
-      regexes={"minecraft:(?P<wood>oak)_sign": "minecraft:dark_{wood}_sign"},
     )
 
     assert str(payload["id"]) == "minecraft:dark_oak_sign"
