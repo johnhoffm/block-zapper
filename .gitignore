@@ -9,7 +9,6 @@ wheels/
 # Virtual environments
 .venv
 
-target/
 # Minecraft source datapacks from misode/mcmeta.git
 tests/integration/.cache/
 tests/integration/structure/
